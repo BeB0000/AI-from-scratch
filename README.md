@@ -39,8 +39,9 @@ Created by **(@BeB0000)**, MIT licensed.
 │   └── beb0.h            # all the hyperparameters and constants
 ├── data/
 │   └── vocab.txt         # tokenizer vocab (you create this)
-└── checkpoints/
-    └── checkpoint.bin    # created automatically when training
+├── checkpoints/
+│   └── checkpoint.bin    # created automatically when training
+└── Makefile
 ```
 
 `beb0.c` includes `../include/beb0.h`, so keep that folder structure.
