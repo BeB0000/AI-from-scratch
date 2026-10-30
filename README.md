@@ -1,163 +1,315 @@
-# beb0 (i called it this :D)
+# beb0 (I called it this :D)
 
-A tiny GPT-style transformer language model written from scratch in plain C.
-No frameworks, no BLAS, no python. Just `malloc`, loops and a lot of patience.
+`beb0` is a small GPT-style transformer language model written from scratch in C. It implements the model, training loop, optimizer, tokenizer lookup, checkpointing, sampling, and terminal chat runtime without a machine-learning framework or BLAS dependency.
 
-It can **train** on a pre-tokenized corpus and **chat** with you in the terminal,
-all from a single source file (`beb0.c`).
+The project also includes Python utilities for collecting a text corpus, cleaning it, training a byte-level BPE tokenizer, and converting the corpus into the binary format expected by the C trainer.
 
-Created by **(@BeB0000)**, MIT licensed.
+Created by **@BeB0000**. Licensed under the MIT License.
 
----
+## Features
 
-## features
+- Decoder-only transformer with token and position embeddings.
 
-- decoder-only transformer (token + position embeddings, multi-head causal self-attention, GELU feed-forward, layer norm, residual connections)
-- hand written forward **and** backward passes for every layer (no autograd)
-- Adam optimizer with bias correction
-- gradient clipping by global norm
-- gradient accumulation (small physical batch, bigger effective batch)
-- 2 thread training (the batch is split in half, one half per thread)
-- BPE style vocab loader with a greedy longest-match encoder
-- corpus loaded with `mmap`, so big token files do not need to fit in ram
-- atomic checkpoint saving (writes `.tmp` then renames), weights + adam state + step count
-- resume training from the last checkpoint automatically
-- sampling with temperature, top-k and a repetition penalty
-- cpu thermal protection: reads the cpu temperature and slows training down if it gets too hot
-- interactive chat mode with a few commands
-- clean ctrl+c handling (saves a checkpoint before exiting)
+- Multi-head causal self-attention, GELU feed-forward layers, layer normalization, and residual connections.
 
----
+- Hand-written forward and backward passes; no automatic differentiation.
 
-## project layout
+- Adam optimizer with bias correction, gradient clipping, and gradient accumulation.
+
+- POSIX-threaded batch processing when the physical batch contains more than one sample.
+
+- Greedy longest-match tokenizer lookup with optional SentencePiece-style `▁` word-start pieces.
+
+- Memory-mapped binary training corpus, so the complete token file does not need to be copied into RAM.
+
+- Atomic checkpoints containing model weights, Adam state, and the current training step.
+
+- Automatic checkpoint resume.
+
+- Temperature sampling, top-k sampling, and repetition control.
+
+- CPU thermal protection on systems exposing `/sys/class/thermal/thermal_zone0/temp`.
+
+- Interactive terminal chat with `/help`, `/joke`, `/clear`, `/restart`, `/quit`, and `/exit` commands.
+
+- SIGINT/SIGTERM handling that saves a checkpoint before training exits.
+
+## Repository layout
 
 ```
 .
-├── src/
-│   └── beb0.c            # the whole model, trainer and chat loop
 ├── include/
-│   └── beb0.h            # all the hyperparameters and constants
-├── data/
-│   └── vocab.txt         # tokenizer vocab (you create this)
-├── checkpoints/
-│   └── checkpoint.bin    # created automatically when training
-└── Makefile
+│   └── beb0.h                 # Model and training configuration
+├── src/
+│   └── beb0.c                 # Model, trainer, tokenizer loader, and chat loop
+├── python/
+│   ├── prepare_corpus.py      # Download Gutenberg and Wikipedia text
+│   ├── clean_corpus.py        # Remove metadata and unwanted text
+│   ├── build_tokenizer.py     # Train the BPE tokenizer and write token files
+│   └── cleaner.py             # Remove a selected character from a text file
+├── data/                      # Generated locally; not included by default
+│   ├── corpus.txt
+│   ├── corpus_clean.txt
+│   ├── corpus.bin
+│   └── vocab.txt
+├── checkpoints/               # Generated locally
+│   └── checkpoint.bin
+├── Makefile
+└── README.md
 ```
 
-`beb0.c` includes `../include/beb0.h`, so keep that folder structure.
+Run commands from the repository root. The executable expects `data/vocab.txt` and `checkpoints/checkpoint.bin` relative to the current working directory.
 
-### what lives in `beb0.h`
+## Requirements
 
-The header holds the constants the code relies on. Tweak these to change the model size or training behaviour:
+### C runtime
 
-| constant | what it does |
+- Linux or another POSIX-like operating system.
+
+- GCC or a compatible C compiler.
+
+- POSIX threads, `libm`, `mmap`, and standard POSIX file APIs.
+
+### Corpus preparation tools
+
+The Python pipeline requires Python 3 and these packages:
+
+```
+python3 -m pip install requests tqdm tokenizers
+```
+
+The C program itself does not require Python at runtime after `data/vocab.txt` and a binary corpus have been created.
+
+## Build
+
+The Makefile is the recommended build path:
+
+```
+make
+```
+
+This produces `./beb0` with `-O3`, native CPU optimizations, warnings enabled, pthread support, and the math library. The equivalent direct command is:
+
+```
+gcc -O3 -march=native -Wall -Wextra -Iinclude \\
+    src/beb0.c -o beb0 -pthread -lm
+```
+
+Useful Make targets:
+
+| Target | Description |
 | --- | --- |
-| `VOCAB_SIZE` | max number of tokens in the vocab |
-| `HIDDEN_DIM` | embedding / hidden size |
-| `NUM_HEADS`, `HEAD_DIM` | attention heads and size of each head |
-| `FF_DIM` | size of the feed-forward layer |
-| `NUM_LAYERS` | number of transformer blocks |
-| `MAX_SEQ_LEN` | context length |
-| `PHYSICAL_BATCH`, `GRAD_ACCUM_STEPS` | batch size per step and accumulation steps |
-| `NUM_STEPS`, `LOG_EVERY`, `SAVE_EVERY` | training length, log and checkpoint frequency |
-| `LEARNING_RATE`, `MIN_LEARNING_RATE`, `FIRE_LEARNING_RATE` | learning rate values |
-| `ADAM_BETA1`, `ADAM_BETA2`, `ADAM_EPS` | adam settings |
-| `CLIP_GRAD_NORM` | gradient clipping threshold |
-| `LN_EPS`, `GELU_C`, `GELU_SQ` | layer norm epsilon and gelu constants |
-| `TOKEN_PAD`, `TOKEN_UNK`, `TOKEN_EOS` | special token ids |
-| `TOP_K`, `REP_PENALTY_WINDOW`, `REP_PENALTY_FACTOR` | sampling settings |
-| `THERMAL_PATH`, `THERMAL_WARN_C`, `THERMAL_CRIT_C`, `THERMAL_SLEEP_US` | thermal protection |
+| `make` | Build the executable. |
+| `make run` | Build and start chat mode. |
+| `make train` | Build and train on `data/corpus.bin`. |
+| `make clean` | Remove object files. |
+| `make clear` | Remove object files and the executable. |
 
-It also needs to pull in the standard headers the code uses (`stdio`, `stdlib`, `string`, `math`, `signal`, `pthread`, `fcntl`, `sys/mman`, `sys/stat`, `unistd`, `time`, `stdint`).
+## Prepare a training corpus
 
----
+The included scripts form a sequential pipeline.
 
-## building
-
-Needs a POSIX system (linux) and a C compiler.
-
-```sh
-gcc -O3 -march=native -o beb0 src/beb0.c -lm -lpthread
-```
-
-`-O3` matters a lot here, the matmuls are plain loops.
-
----
-
-## usage
-
-### 1. make a vocab
-
-Create `data/vocab.txt`, one token per line:
+### 1. Collect raw text
 
 ```
-<piece> <score>
+python3 python/prepare_corpus.py
 ```
 
-- the line number (starting at 0) is the token id
-- the score is optional
-- tokens that look like `<something>` are marked as special
-- sentencepiece style word-start pieces (prefixed with `▁`) are supported, the chat encoder tries both the plain piece and the `▁piece` version
+This creates `data/corpus.txt` from Project Gutenberg books and Wikipedia articles. The script performs network requests and may take a while because it deliberately pauses between requests.
 
-### 2. make a corpus
+### 2. Clean the corpus
 
-The corpus is a raw binary file of **`int32` token ids**, one after another, already tokenized with the same vocab. The trainer picks random windows of `MAX_SEQ_LEN` tokens from it.
-
-### 3. train
-
-```sh
-./beb0 path/to/corpus.bin
+```
+python3 python/clean_corpus.py
 ```
 
-- if `checkpoints/checkpoint.bin` exists, training resumes from it
-- a checkpoint is saved every `SAVE_EVERY` steps and when the run ends
-- press `ctrl+c` any time, it will save and exit cleanly
-- the learning rate drops to `MIN_LEARNING_RATE` after step 50000
+This reads `data/corpus.txt`, removes source markers, Gutenberg headers and footers, illustration blocks, citation markers, and excess blank lines, then writes `data/corpus_clean.txt`.
 
-### 4. chat
+### 3. Train the tokenizer and encode the corpus
 
-```sh
+```
+python3 python/build_tokenizer.py
+```
+
+This trains a byte-level BPE tokenizer with a target vocabulary size of 16,000 and writes:
+
+- `data/vocab.txt`: one token per line, ordered by token ID.
+
+- `data/corpus.bin`: little-endian signed `int32` token IDs.
+
+The C configuration uses the same default vocabulary size through `VOCAB_SIZE` in `include/beb0.h`. If the tokenizer vocabulary size or special-token ordering changes, update the C configuration and start from a fresh checkpoint.
+
+### Optional character cleaner
+
+`cleaner.py` removes every occurrence of one string from a file in place:
+
+```
+python3 python/cleaner.py path/to/file.txt character
+```
+
+Use it carefully because it modifies the input file directly.
+
+## Vocabulary and corpus formats
+
+`data/vocab.txt` is read one line at a time. The line number, starting at zero, is the token ID. A line may contain a token by itself or a token followed by an optional score. Tokens enclosed in angle brackets are treated as special tokens by the loader. The default special-token IDs are:
+
+| Token | ID |
+| --- | --- |
+| `<unk>` | 0 |
+| `<bos>` | 1 |
+| `<eos>` | 2 |
+| `<pad>` | 3 |
+
+The training corpus is a raw sequence of little-endian `int32` token IDs. It must use the same vocabulary and special-token ordering as `data/vocab.txt`. The trainer samples random input/target windows of `MAX_SEQ_LEN` tokens from this file.
+
+## Train
+
+After building the executable and generating `data/corpus.bin`, start training with either command:
+
+```
+./beb0 data/corpus.bin
+```
+
+or:
+
+```
+make train
+```
+
+Training behavior:
+
+- A new model is initialized if `checkpoints/checkpoint.bin` does not exist.
+
+- An existing checkpoint is loaded automatically and training resumes from its saved step.
+
+- Checkpoints are written every `SAVE_EVERY` steps and again when training finishes.
+
+- Press `Ctrl+C` to save the current model and exit cleanly.
+
+- The default configuration trains for 50,000 steps with a physical batch size of 1 and four gradient-accumulation steps.
+
+- The learning rate is reduced to `MIN_LEARNING_RATE` after step 50,000; thermal protection can reduce it further when the CPU is too hot.
+
+The checkpoint directory must exist before the first save. Create it with:
+
+```
+mkdir -p checkpoints
+```
+
+The trainer also expects `data/vocab.txt` to exist, even when the corpus itself has already been prepared.
+
+## Chat
+
+Start interactive chat mode without a corpus argument:
+
+```
 ./beb0
 ```
 
-Loads the checkpoint (or a fresh random model if there is none) and drops you in a chat prompt.
+or:
 
-| command | what it does |
+```
+make run
+```
+
+Chat loads `checkpoints/checkpoint.bin` when available. If no checkpoint exists, it starts with a randomly initialized model, which will not produce useful language until trained.
+
+| Command | Action |
 | --- | --- |
-| `/help` | show the help menu |
-| `/joke` | tell a terrible joke |
-| `/clear` | clear the screen |
-| `/restart` | restart the program (clears the chat history) |
-| `/quit` or `/exit` | leave |
+| `/help` | Show the command list. |
+| `/joke` | Print a built-in joke. |
+| `/clear` | Clear the terminal screen. |
+| `/restart` | Restart the process and clear conversation history. |
+| `/quit`, `/exit` | Leave chat mode. |
 
----
+Generated responses use the configured `TOP_K`, temperature, and repetition-penalty settings in the source. The current chat loop generates up to 200 tokens per response and keeps a bounded conversation history.
 
-## how it works
+## Configuration
 
-1. **tokenize**: text is turned into ids with a greedy longest-match search over the vocab
-2. **embed**: token embedding + learned position embedding
-3. **transformer blocks** (x `NUM_LAYERS`): layer norm, causal multi-head attention, residual, layer norm, GELU feed-forward, residual
-4. **head**: final layer norm and a linear layer to vocab logits
-5. **loss**: cross entropy against the next token
-6. **backward**: gradients are computed by hand through every step above
-7. **update**: gradient clipping then Adam
+Edit `include/beb0.h` and rebuild after changing configuration. Important settings include:
 
-### checkpoint format
+| Constant | Purpose |
+| --- | --- |
+| `VOCAB_SIZE` | Maximum vocabulary size and output-logit count. |
+| `HIDDEN_DIM` | Embedding and transformer hidden width. |
+| `NUM_HEADS`, `HEAD_DIM` | Number and width of attention heads. `HEAD_DIM` is derived from `HIDDEN_DIM / NUM_HEADS`. |
+| `NUM_LAYERS` | Number of transformer blocks. |
+| `FF_MULTIPLIER`, `FF_DIM` | Feed-forward width. `FF_DIM` is derived from `FF_MULTIPLIER * HIDDEN_DIM`. |
+| `MAX_SEQ_LEN` | Context length used for training and generation. |
+| `PHYSICAL_BATCH`, `GRAD_ACCUM_STEPS` | Physical batch size and gradient-accumulation count. |
+| `NUM_STEPS`, `LOG_EVERY`, `SAVE_EVERY` | Training length and reporting/checkpoint intervals. |
+| `LEARNING_RATE`, `MIN_LEARNING_RATE`, `FIRE_LEARNING_RATE` | Learning-rate configuration. |
+| `ADAM_BETA1`, `ADAM_BETA2`, `ADAM_EPS` | Adam optimizer parameters. |
+| `CLIP_GRAD_NORM` | Global gradient-norm limit. |
+| `TOKEN_UNK`, `TOKEN_BOS`, `TOKEN_EOS`, `TOKEN_PAD` | Special-token IDs. |
+| `TOP_K`, `REP_PENALTY_WINDOW`, `REP_PENALTY_FACTOR` | Generation sampling controls. |
+| `THERMAL_PATH`, `THERMAL_WARN_C`, `THERMAL_CRIT_C`, `THERMAL_SLEEP_US` | CPU temperature protection. |
 
-A raw binary file: the step count (`int`), then for every parameter tensor in a fixed order the weights, the adam `m` and the adam `v`. The file is only valid for the exact same hyperparameters it was trained with, so if you change anything in `beb0.h` start with a fresh checkpoint.
+Changing tensor shapes, vocabulary size, token IDs, or other model dimensions invalidates existing checkpoints. Remove the old checkpoint before retraining:
 
-### thermal protection
+```
+rm -f checkpoints/checkpoint.bin checkpoints/checkpoint.bin.tmp
+```
 
-Every `LOG_EVERY` steps the cpu temperature is read from `THERMAL_PATH` (usually `/sys/class/thermal/thermal_zone0/temp`). Above the warning temperature training sleeps a bit, above the critical temperature it sleeps longer and halves the learning rate. Made for an old dual core machine that was not happy about this.
+## Model overview
 
----
+For each input sequence, `beb0`:
 
-## memory
+1. Encodes token IDs using token and learned position embeddings.
 
-The startup message prints the parameter count and a rough ram estimate (weights + gradients + adam m + adam v). Make sure you have enough before raising `HIDDEN_DIM`, `NUM_LAYERS` or `VOCAB_SIZE`.
+1. Applies `NUM_LAYERS` transformer blocks, each with pre-layer normalization, causal multi-head self-attention, a residual connection, GELU feed-forward layers, and a second residual connection.
 
----
+1. Applies a final layer normalization and a linear language-model head.
 
-## license
+1. Computes next-token cross-entropy loss.
 
-MIT. See the header of `beb0.c`.
+1. Computes gradients manually through the complete network.
+
+1. Clips gradients and updates parameters with Adam.
+
+The implementation is intentionally simple and CPU-oriented. Matrix multiplications are plain loops, so compiler optimization and realistic model sizes matter for training speed.
+
+## Checkpoints and memory
+
+Checkpoints are raw binary files. They contain the training step followed by every parameter tensor in a fixed order, including its weights and Adam `m` and `v` buffers. They are not portable across incompatible hyperparameter or source-layout changes.
+
+At startup, the program prints an approximate memory requirement based on parameters, gradients, and optimizer state. Attention scratch buffers and activations require additional memory, especially as `MAX_SEQ_LEN`, `HIDDEN_DIM`, `NUM_LAYERS`, or `VOCAB_SIZE` increase.
+
+## Thermal protection
+
+On systems with the configured thermal file, the program checks the CPU temperature every `LOG_EVERY` steps. Above `THERMAL_WARN_C`, it pauses briefly; above `THERMAL_CRIT_C`, it pauses longer and reduces the active learning rate. If the thermal file is unavailable, the temperature is reported as unavailable and training continues.
+
+If your system exposes temperature data at another path, update `THERMAL_PATH` in `include/beb0.h` before rebuilding.
+
+## Troubleshooting
+
+### `cannot open data/vocab.txt`
+
+Run the tokenizer step and make sure you are launching `beb0` from the repository root:
+
+```
+python3 python/build_tokenizer.py
+./beb0
+```
+
+### `failed to load corpus`
+
+Confirm that the corpus is a binary `int32` token file, that it is larger than at least one training window, and that the path passed to `beb0` is correct.
+
+### The model produces poor or random responses
+
+A fresh model is random. Train it on a sufficiently large, clean corpus, verify that the tokenizer and C special-token IDs agree, and ensure that the checkpoint was created with the current `beb0.h` settings.
+
+### Checkpoint loading fails after a configuration change
+
+Delete the old checkpoint and train again with the new configuration:
+
+```
+rm -f checkpoints/checkpoint.bin checkpoints/checkpoint.bin.tmp
+./beb0 data/corpus.bin
+```
+
+## License
+
+MIT License. See the source header in `src/beb0.c` for the project notice.
+:wq
