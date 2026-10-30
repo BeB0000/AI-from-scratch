@@ -6,7 +6,7 @@ No frameworks, no BLAS, no python. Just `malloc`, loops and a lot of patience.
 It can **train** on a pre-tokenized corpus and **chat** with you in the terminal,
 all from a single source file (`beb0.c`).
 
-Created by **abanoub** (@BeB0000), MIT licensed.
+Created by **(@BeB0000)**, MIT licensed.
 
 ---
 
